@@ -46,31 +46,51 @@ fn expr(input: &str) -> S {
     res
 }
 
-// enum Fixity {
-//     Prefix,
-//     Infix,
-//     Postfix,
-//     None,
-//   }
-
-// struct Operator(char, Fixity);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Operator(char, bool);
+enum Fixity {
+    Prefix,
+    Infix,
+    Postfix,
+    None,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Operator(char, Fixity);
 
 impl Operator {
     fn bp(&self) -> Option<(u8, u8)> {
-        let &Operator(op, prefix) = self;
-
-        Some(match op {
-            '0'..='9' | 'a'..='z' | 'A'..='Z' => (99, 100),
-            '(' => (99, 0),
-            ')' => (0, 100),
-            '=' => (2, 1),
-            '+' | '-' if prefix => (99, 9),
-            '+' | '-' => (5, 6),
-            '*' | '/' => (7, 8),
-            '!' => (11, 100),
-            '.' => (14, 13),
+        Some(match self {
+            Operator(
+                '0'..='9' | 'a'..='z' | 'A'..='Z',
+                Fixity::None,
+            ) => (99, 100),
+            Operator(token, Fixity::Prefix) => (
+                99,
+                match token {
+                    '(' => 0,
+                    '+' | '-' => 9,
+                    &token => {
+                        return Operator(token, Fixity::None).bp()
+                    }
+                },
+            ),
+            Operator(token, Fixity::Postfix) => (
+                match token {
+                    ')' => 0,
+                    '!' => 11,
+                    _ => return None,
+                },
+                100,
+            ),
+            Operator(token, Fixity::Infix) => match token {
+                '=' => (2, 1),
+                '+' | '-' => (5, 6),
+                '*' | '/' => (7, 8),
+                '.' => (14, 13),
+                &token => {
+                    return Operator(token, Fixity::Postfix).bp()
+                }
+            },
             _ => return None,
         })
     }
@@ -81,23 +101,13 @@ impl PartialOrd for Operator {
     fn partial_cmp(&self, other: &Operator) -> Option<Ordering> {
         let (_, r_bp1) = self.bp()?;
         let (l_bp2, _) = other.bp()?;
-        let res = match (r_bp1 < l_bp2, r_bp1 > l_bp2) {
-            (false, false) => {
-                println!("{:?} = {:?}", self, other);
-                Some(Ordering::Equal)
-            }
-            (true, false) => {
-                println!("{:?} < {:?}", self, other);
-                Some(Ordering::Less)
-            }
-            (false, true) => {
-                println!("{:?} > {:?}", self, other);
-                Some(Ordering::Greater)
-            }
-            _ => None,
-        };
-        println!("{:?}", res);
-        res
+
+        Some(match (r_bp1 < l_bp2, r_bp1 > l_bp2) {
+            (false, false) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => return None,
+        })
     }
 }
 struct Frame {
@@ -105,7 +115,7 @@ struct Frame {
     lhs: Option<S>,
 }
 
-fn expr_bp(lexer: &mut Lexer) -> Option<S> {
+fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
     let mut top = Frame {
         lhs: None,
         operator: None,
@@ -115,14 +125,25 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
     loop {
         let token = lexer.next();
         let operator = loop {
-            let operator = token.map(|token| Operator(token, top.lhs.is_none()));
+            let operator = token.map(|token| {
+                Operator(
+                    token,
+                    if top.lhs.is_none() {
+                        Fixity::Prefix
+                    } else {
+                        Fixity::Infix
+                    },
+                )
+            });
             match operator {
                 t @ Some(op) if top.operator <= t => break op,
                 _ => {
                     let res = top;
                     top = match stack.pop() {
                         Some(it) => it,
-                        None => return res.lhs,
+                        None => {
+                            return res.lhs.ok_or("No expression")
+                        }
                     };
 
                     let token = res.operator.unwrap().0;
@@ -138,13 +159,27 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
         if operator.0 == ')' {
             assert_eq!(
                 top.operator,
-                Some(Operator('(', true))
+                Some(Operator('(', Fixity::Prefix))
             );
             let res = top;
             top = stack.pop().unwrap();
             top.lhs = res.lhs;
             continue;
         }
+        // if let Operator(')', Fixity::Postfix) = operator {
+        //     println!("{:?}", operator);
+        //     println!("{:?}", top.operator);
+        //     if let Some(Operator('(', Fixity::Prefix)) =
+        //         top.operator
+        //     {
+        //         let res = top;
+        //         top = stack.pop().unwrap();
+        //         top.lhs = res.lhs;
+        //         continue;
+        //     } else {
+        //         return Err("Unexpected closing parenthesis");
+        //     }
+        // }
 
         stack.push(top);
         top = Frame {
