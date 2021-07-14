@@ -1,24 +1,22 @@
 use std::{fmt, io::BufRead};
 
-enum S {
-    Cons(char, Vec<S>),
-}
+#[derive(Debug)]
+struct S(char, Option<Box<S>>, Option<Box<S>>);
 
 impl fmt::Display for S {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            S::Cons(head, rest) => {
-                if rest.is_empty() {
-                    write!(f, "{}", head)
-                } else {
-                    write!(f, "({}", head)?;
-                    for s in rest {
-                        write!(f, " {}", s)?
-                    }
-                    write!(f, ")")
-                }
-            }
-        }
+            Self(op, None, None) => write!(f, "{}", op),
+            Self(op, Some(left), None) => {
+              write!(f, "({} {})", op, left)
+            },
+            Self(op, Some(left), Some(right)) => {
+              write!(f, "({} {} {})", op, left, right)
+            },
+            Self(op, None, Some(right)) => {
+              write!(f, "({} {})", op, right)
+            },
+          }
     }
 }
 
@@ -47,17 +45,26 @@ fn expr(input: &str) -> S {
     res
 }
 
+// enum Fixity {
+//     Prefix,
+//     Infix,
+//     Postfix,
+//     None,
+//   }
+
+// struct Operator(char, Fixity);
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Operator(char, u8);
+
 struct Frame {
-    min_bp: u8,
+    operator: Option<Operator>,
     lhs: Option<S>,
-    token: Option<char>,
 }
 
 fn expr_bp(lexer: &mut Lexer) -> Option<S> {
     let mut top = Frame {
-        min_bp: 0,
         lhs: None,
-        token: None,
+        operator: None,
     };
     let mut stack = Vec::new();
 
@@ -65,7 +72,7 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
         let token = lexer.next();
         let (token, r_bp) = loop {
             match binding_power(token, top.lhs.is_none()) {
-                Some((t, (l_bp, r_bp))) if top.min_bp <= l_bp => {
+                Some((t, (l_bp, r_bp))) if top.operator.clone().map(|Operator(_, u)| u).unwrap_or(0) <= l_bp => {
                     break (t, r_bp)
                 }
                 _ => {
@@ -75,17 +82,14 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
                         None => return res.lhs,
                     };
 
-                    let mut args = Vec::new();
-                    args.extend(top.lhs);
-                    args.extend(res.lhs);
-                    let token = res.token.unwrap();
-                    top.lhs = Some(S::Cons(token, args));
+                    let token = res.operator.unwrap().0;
+                    top.lhs = Some(S(token, top.lhs.map(Box::new), res.lhs.map(Box::new)));
                 }
             };
         };
 
         if token == ')' {
-            assert_eq!(top.token, Some('('));
+            assert_eq!(top.operator, Some(Operator('(', 0)));
             let res = top;
             top = stack.pop().unwrap();
             top.lhs = res.lhs;
@@ -94,9 +98,8 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
 
         stack.push(top);
         top = Frame {
-            min_bp: r_bp,
             lhs: None,
-            token: Some(token),
+            operator: Some(Operator(token, r_bp)),
         };
     }
 }
