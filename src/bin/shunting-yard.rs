@@ -1,3 +1,4 @@
+#![feature(bindings_after_at)]
 use std::{fmt, io::BufRead};
 
 #[derive(Debug)]
@@ -8,15 +9,15 @@ impl fmt::Display for S {
         match self {
             Self(op, None, None) => write!(f, "{}", op),
             Self(op, Some(left), None) => {
-              write!(f, "({} {})", op, left)
-            },
+                write!(f, "({} {})", op, left)
+            }
             Self(op, Some(left), Some(right)) => {
-              write!(f, "({} {} {})", op, left, right)
-            },
+                write!(f, "({} {} {})", op, left, right)
+            }
             Self(op, None, Some(right)) => {
-              write!(f, "({} {})", op, right)
-            },
-          }
+                write!(f, "({} {})", op, right)
+            }
+        }
     }
 }
 
@@ -53,9 +54,52 @@ fn expr(input: &str) -> S {
 //   }
 
 // struct Operator(char, Fixity);
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct Operator(char, u8);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Operator(char, bool);
 
+impl Operator {
+    fn bp(&self) -> Option<(u8, u8)> {
+        let &Operator(op, prefix) = self;
+
+        Some(match op {
+            '0'..='9' | 'a'..='z' | 'A'..='Z' => (99, 100),
+            '(' => (99, 0),
+            ')' => (0, 100),
+            '=' => (2, 1),
+            '+' | '-' if prefix => (99, 9),
+            '+' | '-' => (5, 6),
+            '*' | '/' => (7, 8),
+            '!' => (11, 100),
+            '.' => (14, 13),
+            _ => return None,
+        })
+    }
+}
+
+use std::cmp::Ordering;
+impl PartialOrd for Operator {
+    fn partial_cmp(&self, other: &Operator) -> Option<Ordering> {
+        let (_, r_bp1) = self.bp()?;
+        let (l_bp2, _) = other.bp()?;
+        let res = match (r_bp1 < l_bp2, r_bp1 > l_bp2) {
+            (false, false) => {
+                println!("{:?} = {:?}", self, other);
+                Some(Ordering::Equal)
+            }
+            (true, false) => {
+                println!("{:?} < {:?}", self, other);
+                Some(Ordering::Less)
+            }
+            (false, true) => {
+                println!("{:?} > {:?}", self, other);
+                Some(Ordering::Greater)
+            }
+            _ => None,
+        };
+        println!("{:?}", res);
+        res
+    }
+}
 struct Frame {
     operator: Option<Operator>,
     lhs: Option<S>,
@@ -70,11 +114,10 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
 
     loop {
         let token = lexer.next();
-        let (token, r_bp) = loop {
-            match binding_power(token, top.lhs.is_none()) {
-                Some((t, (l_bp, r_bp))) if top.operator.clone().map(|Operator(_, u)| u).unwrap_or(0) <= l_bp => {
-                    break (t, r_bp)
-                }
+        let operator = loop {
+            let operator = token.map(|token| Operator(token, top.lhs.is_none()));
+            match operator {
+                t @ Some(op) if top.operator <= t => break op,
                 _ => {
                     let res = top;
                     top = match stack.pop() {
@@ -83,13 +126,20 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
                     };
 
                     let token = res.operator.unwrap().0;
-                    top.lhs = Some(S(token, top.lhs.map(Box::new), res.lhs.map(Box::new)));
+                    top.lhs = Some(S(
+                        token,
+                        top.lhs.map(Box::new),
+                        res.lhs.map(Box::new),
+                    ));
                 }
             };
         };
 
-        if token == ')' {
-            assert_eq!(top.operator, Some(Operator('(', 0)));
+        if operator.0 == ')' {
+            assert_eq!(
+                top.operator,
+                Some(Operator('(', true))
+            );
             let res = top;
             top = stack.pop().unwrap();
             top.lhs = res.lhs;
@@ -99,29 +149,9 @@ fn expr_bp(lexer: &mut Lexer) -> Option<S> {
         stack.push(top);
         top = Frame {
             lhs: None,
-            operator: Some(Operator(token, r_bp)),
+            operator: Some(operator),
         };
     }
-}
-
-fn binding_power(
-    op: Option<char>,
-    prefix: bool,
-) -> Option<(char, (u8, u8))> {
-    let op = op?;
-    let res = match op {
-        '0'..='9' | 'a'..='z' | 'A'..='Z' => (99, 100),
-        '(' => (99, 0),
-        ')' => (0, 100),
-        '=' => (2, 1),
-        '+' | '-' if prefix => (99, 9),
-        '+' | '-' => (5, 6),
-        '*' | '/' => (7, 8),
-        '!' => (11, 100),
-        '.' => (14, 13),
-        _ => return None,
-    };
-    Some((op, res))
 }
 
 #[test]
