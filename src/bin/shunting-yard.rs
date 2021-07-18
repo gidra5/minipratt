@@ -1,7 +1,7 @@
 #![feature(bindings_after_at)]
 use std::{fmt, io::BufRead};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct S(char, Option<Box<S>>, Option<Box<S>>);
 
 impl fmt::Display for S {
@@ -18,6 +18,12 @@ impl fmt::Display for S {
                 write!(f, "({} {})", op, right)
             }
         }
+    }
+}
+
+impl From<S> for String {
+    fn from(x: S) -> String {
+        format!("{}", x)
     }
 }
 
@@ -40,10 +46,10 @@ impl Lexer {
     }
 }
 
-fn expr(input: &str) -> S {
+fn expr(input: &str) -> Result<S, &'static str> {
     let mut lexer = Lexer::new(input);
-    let res = expr_bp(&mut lexer).unwrap();
-    res
+
+    expr_bp(&mut lexer)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,6 +64,56 @@ enum Fixity {
 struct Operator(char, Fixity);
 
 impl Operator {
+    pub fn new(
+        token: Option<char>,
+        prefix: bool,
+    ) -> Option<Self> {
+        let token = token?;
+        let op = Operator(
+            token,
+            if prefix {
+                Fixity::Prefix
+            } else {
+                Fixity::Infix
+            },
+        );
+
+        if op.exist() {
+            return Some(op);
+        }
+
+        let op = Operator(
+            token,
+            if prefix {
+                Fixity::None
+            } else {
+                Fixity::Postfix
+            },
+        );
+
+        if op.exist() {
+            return Some(op);
+        }
+
+        None
+    }
+
+    fn exist(&self) -> bool {
+        match self {
+            Operator(
+                '0'..='9' | 'a'..='z' | 'A'..='Z',
+                Fixity::None,
+            ) => true,
+            Operator('(' | '+' | '-', Fixity::Prefix) => true,
+            Operator(')' | '!', Fixity::Postfix) => true,
+            Operator(
+                '.' | '=' | '+' | '-' | '*' | '/',
+                Fixity::Infix,
+            ) => true,
+            _ => false,
+        }
+    }
+
     fn bp(&self) -> Option<(u8, u8)> {
         Some(match self {
             Operator(
@@ -69,9 +125,7 @@ impl Operator {
                 match token {
                     '(' => 0,
                     '+' | '-' => 9,
-                    &token => {
-                        return Operator(token, Fixity::None).bp()
-                    }
+                    _ => return None,
                 },
             ),
             Operator(token, Fixity::Postfix) => (
@@ -87,9 +141,7 @@ impl Operator {
                 '+' | '-' => (5, 6),
                 '*' | '/' => (7, 8),
                 '.' => (14, 13),
-                &token => {
-                    return Operator(token, Fixity::Postfix).bp()
-                }
+                _ => return None,
             },
             _ => return None,
         })
@@ -125,20 +177,18 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
     loop {
         let token = lexer.next();
         let operator = loop {
-            let operator = token.map(|token| {
-                Operator(
-                    token,
-                    if top.lhs.is_none() {
-                        Fixity::Prefix
-                    } else {
-                        Fixity::Infix
-                    },
-                )
-            });
+            let operator =
+                Operator::new(token, top.lhs.is_none());
             match operator {
                 t @ Some(op) if top.operator <= t => break op,
                 _ => {
                     let res = top;
+                    if let Some(S('(', None, Some(_))) = res.lhs {
+                        return Err(
+                            "Expected closing parenthesis",
+                        );
+                    }
+
                     top = match stack.pop() {
                         Some(it) => it,
                         None => {
@@ -146,9 +196,8 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
                         }
                     };
 
-                    let token = res.operator.unwrap().0;
                     top.lhs = Some(S(
-                        token,
+                        res.operator.unwrap().0,
                         top.lhs.map(Box::new),
                         res.lhs.map(Box::new),
                     ));
@@ -156,30 +205,18 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
             };
         };
 
-        if operator.0 == ')' {
-            assert_eq!(
-                top.operator,
-                Some(Operator('(', Fixity::Prefix))
-            );
-            let res = top;
-            top = stack.pop().unwrap();
-            top.lhs = res.lhs;
-            continue;
+        if let Operator(')', Fixity::Postfix) = operator {
+            if let Some(Operator('(', Fixity::Prefix)) =
+                top.operator
+            {
+                let res = top;
+                top = stack.pop().unwrap();
+                top.lhs = res.lhs;
+                continue;
+            } else {
+                return Err("Unexpected closing parenthesis");
+            }
         }
-        // if let Operator(')', Fixity::Postfix) = operator {
-        //     println!("{:?}", operator);
-        //     println!("{:?}", top.operator);
-        //     if let Some(Operator('(', Fixity::Prefix)) =
-        //         top.operator
-        //     {
-        //         let res = top;
-        //         top = stack.pop().unwrap();
-        //         top.lhs = res.lhs;
-        //         continue;
-        //     } else {
-        //         return Err("Unexpected closing parenthesis");
-        //     }
-        // }
 
         stack.push(top);
         top = Frame {
@@ -191,50 +228,62 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
 
 #[test]
 fn tests() {
-    let s = expr("1");
+    let s = expr("1").unwrap();
     assert_eq!(s.to_string(), "1");
 
-    let s = expr("1 + 2 * 3");
+    let s = expr("1 + 2 * 3").unwrap();
     assert_eq!(s.to_string(), "(+ 1 (* 2 3))");
 
-    let s = expr("a + b * c * d + e");
+    let s = expr("a + b * c * d + e").unwrap();
     assert_eq!(s.to_string(), "(+ (+ a (* (* b c) d)) e)");
 
-    let s = expr("f . g . h");
+    let s = expr("f . g . h").unwrap();
     assert_eq!(s.to_string(), "(. f (. g h))");
 
-    let s = expr(" 1 + 2 + f . g . h * 3 * 4");
+    let s = expr(" 1 + 2 + f . g . h * 3 * 4").unwrap();
     assert_eq!(
         s.to_string(),
         "(+ (+ 1 2) (* (* (. f (. g h)) 3) 4))"
     );
 
-    let s = expr("--1 * 2");
+    let s = expr("--1 * 2").unwrap();
     assert_eq!(s.to_string(), "(* (- (- 1)) 2)");
 
-    let s = expr("--f . g");
+    let s = expr("--f . g").unwrap();
     assert_eq!(s.to_string(), "(- (- (. f g)))");
 
-    let s = expr("-9!");
+    let s = expr("-9!").unwrap();
     assert_eq!(s.to_string(), "(- (! 9))");
 
-    let s = expr("f . g !");
+    let s = expr("f . g !").unwrap();
     assert_eq!(s.to_string(), "(! (. f g))");
 
-    let s = expr("(((0)))");
+    let s = expr("(((0)))").unwrap();
     assert_eq!(s.to_string(), "0");
 
-    let s = expr("(1 + 2) * 3");
+    let s = expr("(1 + 2) * 3").unwrap();
     assert_eq!(s.to_string(), "(* (+ 1 2) 3)");
 
-    let s = expr("1 + (2 * 3)");
+    let s = expr("1 + (2 * 3)").unwrap();
     assert_eq!(s.to_string(), "(+ 1 (* 2 3))");
+
+    let s = expr("(1 + (2 * 3)").unwrap_err();
+    assert_eq!(s, "Expected closing parenthesis");
+
+    let s = expr("1 + (2 * 3))").unwrap_err();
+    assert_eq!(s, "Unexpected closing parenthesis");
+
+    let s = expr("1 + 2 * 3)").unwrap_err();
+    assert_eq!(s, "Unexpected closing parenthesis");
+
+    let s = expr("1 + (2 * 3").unwrap_err();
+    assert_eq!(s, "Expected closing parenthesis");
 }
 
 fn main() {
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
         let s = expr(&line);
-        println!("{}", s)
+        println!("{:?}", s)
     }
 }
