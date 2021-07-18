@@ -52,7 +52,7 @@ fn expr(input: &str) -> Result<S, &'static str> {
     expr_bp(&mut lexer)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Fixity {
     Prefix,
     Infix,
@@ -60,15 +60,14 @@ enum Fixity {
     None,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Operator(char, Fixity);
 
 impl Operator {
     pub fn new(
-        token: Option<char>,
+        token: char,
         prefix: bool,
     ) -> Option<Self> {
-        let token = token?;
         let op = Operator(
             token,
             if prefix {
@@ -177,9 +176,17 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
     loop {
         let token = lexer.next();
         let operator = loop {
-            let operator =
-                Operator::new(token, top.lhs.is_none());
+            let operator = token.map(|token| 
+                Operator::new(token, top.lhs.is_none())
+            ).flatten();
+            // let operator = token.map(|token| 
+            //     Operator::new(token, top.lhs.is_none())
+            // );
             match operator {
+                // Some(None) => return Err(
+                //     "No such operator",
+                // ),
+                // Some(t @ Some(op)) if top.operator <= t => break op,
                 t @ Some(op) if top.operator <= t => break op,
                 _ => {
                     let res = top;
