@@ -64,10 +64,7 @@ enum Fixity {
 struct Operator(char, Fixity);
 
 impl Operator {
-    pub fn new(
-        token: char,
-        prefix: bool,
-    ) -> Option<Self> {
+    pub fn new(token: char, prefix: bool) -> Option<Self> {
         let op = Operator(
             token,
             if prefix {
@@ -147,19 +144,63 @@ impl Operator {
     }
 }
 
+// macro_rules! operator_def {
+//     ($([$body: tt])? ($c1:pat) < ($c2:pat) $(< $rest: tt)?) => {
+//         operator_def!([
+//             $c1 => match right {
+//                 $c2 => Ordering::Less,
+//                 right => match right.partial_cmp($c2) {
+//                     Some(Ordering::Less) => Ordering::Greater,
+//                     Some(Ordering::Greater) => Ordering::Less,
+//                     Some(Ordering::Equal) => unreachable!(),
+//                     None => return None,
+//                 }
+//             },
+//             $body
+//         ] ($c2) $(< $rest)?)
+//     };
+//     ($([$body: tt])? ($c1:pat)) => {
+//         use std::cmp::Ordering;
+//         impl PartialOrd for Operator {
+//             fn partial_cmp(&self, right: &Operator) -> Option<Ordering> {
+//                 Some(match self {
+//                     $($body)?
+//                     $c1 => Ordering::Greater,
+//                     _ => return None
+//                 })
+//             }
+//         }
+//     };
+// }
+
+// operator_def!(
+//     (Operator(
+//         '+' | '-',
+//         Fixity::Infix,
+//     )) <
+//     (Operator(
+//         '*' | '/',
+//         Fixity::Infix,
+//     )) < 
+//     (Operator(
+//         '0'..='9' | 'a'..='z' | 'A'..='Z',
+//         Fixity::None,
+//     ))
+// );
+
 use std::cmp::Ordering;
 impl PartialOrd for Operator {
-    fn partial_cmp(&self, other: &Operator) -> Option<Ordering> {
-        let (_, r_bp1) = self.bp()?;
-        let (l_bp2, _) = other.bp()?;
+fn partial_cmp(&self, other: &Operator) -> Option<Ordering> {
+    let (_, r_bp1) = self.bp()?;
+    let (l_bp2, _) = other.bp()?;
 
-        Some(match (r_bp1 < l_bp2, r_bp1 > l_bp2) {
-            (false, false) => Ordering::Equal,
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            _ => return None,
-        })
-    }
+    Some(match (r_bp1 < l_bp2, r_bp1 > l_bp2) {
+        (false, false) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        _ => return None,
+    })
+}
 }
 struct Frame {
     operator: Option<Operator>,
@@ -176,10 +217,12 @@ fn expr_bp(lexer: &mut Lexer) -> Result<S, &'static str> {
     loop {
         let token = lexer.next();
         let operator = loop {
-            let operator = token.map(|token| 
-                Operator::new(token, top.lhs.is_none())
-            ).flatten();
-            // let operator = token.map(|token| 
+            let operator = token
+                .map(|token| {
+                    Operator::new(token, top.lhs.is_none())
+                })
+                .flatten();
+            // let operator = token.map(|token|
             //     Operator::new(token, top.lhs.is_none())
             // );
             match operator {
